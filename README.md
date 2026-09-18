@@ -137,7 +137,7 @@ OPENAI_API_KEY=sk-your-real-openai-key
 WAVESPEED_API_KEY=your-real-wavespeed-key
 ```
 
-Do not add quotes or spaces around the equals sign, and never commit `.env`; Git already ignores it. `OPENAI_API_KEY` powers the Harness conversation and planning model, while `WAVESPEED_API_KEY` powers the default Seedance video path. When `WAVESPEED_API_KEY` is empty, new projects default to the local Code-to-Video mode; the dedicated composer button can enable or disable it for each project. To use Volcengine Ark instead, leave `WAVESPEED_API_KEY` empty, set `ARK_API_KEY`, and disable Code-to-Video when you want the provider workflow. `SUNO_API_KEY` is needed only for music generation. Restart the local stack after changing a key so it is reloaded.
+`OPENAI_API_KEY` powers the Harness conversation and planning model, while `WAVESPEED_API_KEY` powers the default Seedance video path. When `WAVESPEED_API_KEY` is empty, new projects default to the local Code-to-Video mode; the dedicated composer button can enable or disable it for each project. To use Volcengine Ark instead, leave `WAVESPEED_API_KEY` empty, set `ARK_API_KEY`, and disable Code-to-Video when you want the provider workflow. `SUNO_API_KEY` is needed only for music generation. Restart the local stack after changing a key so it is reloaded.
 
 ### 5. Prepare the local dependencies
 
