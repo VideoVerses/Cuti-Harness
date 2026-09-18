@@ -78,21 +78,14 @@ This is the release acceptance path for the open-source branch. The setup comman
 - Conda (Miniconda, Miniforge, or Anaconda).
 - Internet access during environment setup so the setup command can install Python packages and separately licensed FFmpeg/FFprobe tools.
 
-### 1. Clone the open-source branch
+### 1. Clone the repository
 
 ```sh
-git clone --depth 1 --filter=blob:none --branch deepseek-harness-open --single-branch https://github.com/VideoVerses/Cuti-Harness.git
-cd cuti-video-agent
+git clone https://github.com/VideoVerses/Cuti-Harness.git
+cd Cuti-Harness
 ```
 
-The HTTPS command works anonymously after the repository visibility is set to **Public**. Before public release, an invited collaborator with a configured GitHub SSH key can use:
-
-```sh
-git clone --depth 1 --filter=blob:none --branch deepseek-harness-open --single-branch git@github.com:VideoVerses/Cuti-Harness.git
-cd cuti-video-agent
-```
-
-The shallow, blob-filtered clone still checks out every file needed to build and run while avoiding unnecessary history transfer. Contributors who later need the complete history can run `git fetch --unshallow`.
+The repository has one branch, `main`, which Git checks out automatically.
 
 ### 2. Create and activate the Conda environment
 

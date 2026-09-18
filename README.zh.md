@@ -78,21 +78,14 @@ Video Studio 的两条真实导出路径：对话式迭代构建视频世界，�
 - Conda（Miniconda、Miniforge 或 Anaconda）。
 - 环境准备阶段需要联网，以便安装 Python 依赖以及采用各自许可证的 FFmpeg/FFprobe 工具。
 
-### 1. 克隆开源分支
+### 1. 克隆仓库
 
 ```sh
-git clone --depth 1 --filter=blob:none --branch deepseek-harness-open --single-branch https://github.com/VideoVerses/Cuti-Harness.git
-cd cuti-video-agent
+git clone https://github.com/VideoVerses/Cuti-Harness.git
+cd Cuti-Harness
 ```
 
-仓库可见性设为 **Public** 后，任何人都能匿名执行上述 HTTPS 命令。正式公开前，已获邀请且配置了 GitHub SSH Key 的协作者可以使用：
-
-```sh
-git clone --depth 1 --filter=blob:none --branch deepseek-harness-open --single-branch git@github.com:VideoVerses/Cuti-Harness.git
-cd cuti-video-agent
-```
-
-浅克隆结合 Blob 过滤仍会检出构建和运行所需的全部文件，同时避免传输无关历史；后续确实需要完整历史时，可以执行 `git fetch --unshallow`。
+仓库只有 `main` 分支，Git 会自动检出该分支。
 
 ### 2. 创建并激活 Conda 环境
 
