@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import tempfile
@@ -54,6 +55,23 @@ class ExecutableProviderPlugin(RecordingPlugin):
 
 
 class PluginRegistryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_final_video_probe_propagates_cancellation(self):
+        artifact = MediaArtifactVersion(
+            project_id="project-1",
+            type="final_video",
+            uri="https://cdn.example.test/final.mp4",
+            metadata={"generation_parameters": {"final_output": True}},
+        )
+        with patch(
+            "app.video_runtime.builtin_plugins.continuity_validator._video_info",
+            new=AsyncMock(side_effect=asyncio.CancelledError),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await ContinuityValidatorPlugin().validate_artifact(
+                    PluginContext(project_id="project-1", build_id="build-1"),
+                    artifact,
+                )
+
     async def asyncSetUp(self):
         self.plugin = RecordingPlugin()
         module = types.ModuleType("cuti_test_plugin")

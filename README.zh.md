@@ -137,7 +137,7 @@ OPENAI_API_KEY=sk-your-real-openai-key
 WAVESPEED_API_KEY=your-real-wavespeed-key
 ```
 
-不要添加引号或在等号两侧添加空格，也不要提交 `.env`；该文件已被 Git 忽略。`OPENAI_API_KEY` 用于 Harness 的对话和规划模型，`WAVESPEED_API_KEY` 用于默认 Seedance 视频生成路径。`WAVESPEED_API_KEY` 为空时，新项目默认进入本地 Code-to-Video 模式；可以用输入区中的专用按钮为每个项目开启或关闭。若改用火山 Ark，可保留 `WAVESPEED_API_KEY` 为空、填写 `ARK_API_KEY`，并在需要提供方工作流时关闭 Code-to-Video。只有使用音乐生成能力时才需要 `SUNO_API_KEY`。修改 Key 后需重启本地服务栈才能重新加载。
+`OPENAI_API_KEY` 用于 Harness 的对话和规划模型，`WAVESPEED_API_KEY` 用于默认 Seedance 视频生成路径。`WAVESPEED_API_KEY` 为空时，新项目默认进入本地 Code-to-Video 模式；可以用输入区中的专用按钮为每个项目开启或关闭。若改用火山 Ark，可保留 `WAVESPEED_API_KEY` 为空、填写 `ARK_API_KEY`，并在需要提供方工作流时关闭 Code-to-Video。只有使用音乐生成能力时才需要 `SUNO_API_KEY`。修改 Key 后需重启本地服务栈才能重新加载。
 
 ### 5. 准备本地依赖
 

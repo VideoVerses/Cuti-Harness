@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 
@@ -355,7 +356,9 @@ class ContinuityValidatorPlugin(BaseVideoPlugin):
                     issues.append(f"final video duration {duration:.2f}s differs from target {target:.2f}s")
                 if parameters.get("require_audio") and not info.get("has_audio"):
                     issues.append("final video has no audio track")
-            except BaseException as exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
                 issues.append(f"final video probe failed: {exc}")
 
         return [ValidationResult(

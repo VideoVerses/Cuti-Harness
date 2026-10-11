@@ -59,6 +59,69 @@ class _FakeExecutor:
     "set VIDEO_RUNTIME_DATABASE_URL to run the Postgres integration test",
 )
 class PostgresVideoRuntimeIntegrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_build_rejects_stale_updates_and_initial_commit(self) -> None:
+        database_url = os.environ["VIDEO_RUNTIME_DATABASE_URL"]
+        suffix = uuid4().hex
+        repository = await PostgresVideoProjectRepository.connect(database_url)
+        runtime = VideoBuildRuntime(repository=repository)
+        await runtime.plugins.load_directories([
+            Path(__file__).resolve().parents[2] / "plugins",
+        ])
+        await load_workflow_skills(runtime.plugins, runtime.skills)
+        project, version = await runtime.create_project(
+            user_id=f"cancel-user-{suffix}", title="Cancelled Postgres build",
+        )
+        plan = await runtime.plan_project(
+            project_id=project.id,
+            base_project_version_id=version.id,
+            idempotency_key=f"cancel-plan-{suffix}",
+            video_spec=VideoSpec.model_validate({
+                "title": "Five seconds", "target_duration_seconds": 5,
+                "characters": [],
+                "shots": [{
+                    "id": "one", "order": 1, "duration_seconds": 5,
+                    "beat": "arrive", "visual_prompt": "A train arrives",
+                }],
+                "audio": {"bgm_prompt": "", "subtitles": False},
+            }),
+        )
+        build = await runtime.start_build(
+            project_id=project.id,
+            plan_id=plan.id,
+            base_project_version_id=version.id,
+            idempotency_key=f"cancel-build-{suffix}",
+        )
+        step = (await repository.list_build_steps(project.id, build.id))[0]
+        stale_step = step.model_copy(update={"status": "running"})
+        step.status = "completed"
+        await repository.update_build_step(step)
+        stale_step.status = "failed"
+        stale_step.error = "late worker failure"
+        self.assertEqual(
+            (await repository.update_build_step(stale_step)).status,
+            "completed",
+        )
+        stale = build.model_copy(update={"status": "running"})
+        await repository.cancel_build(project.id, build.id)
+
+        result = await repository.update_build(stale)
+
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual((await repository.get_build(project.id, build.id)).status, "cancelled")
+        with self.assertRaisesRegex(ValueError, "cannot commit cancelled build"):
+            await repository.commit_initial_build(
+                build_id=build.id,
+                artifacts=[],
+                dependencies=[],
+                validation_results=[],
+            )
+        self.assertEqual(
+            (await repository.get_project(project.id)).current_version_id,
+            version.id,
+        )
+        await runtime.close()
+        await repository.close()
+
     async def test_idempotent_incremental_build_survives_repository_restart(self) -> None:
         database_url = os.environ["VIDEO_RUNTIME_DATABASE_URL"]
         suffix = uuid4().hex

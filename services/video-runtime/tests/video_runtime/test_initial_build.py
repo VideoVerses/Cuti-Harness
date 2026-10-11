@@ -147,6 +147,20 @@ class FakePlanExecutor:
         )
 
 
+class CancellationSwallowingPlanExecutor(FakePlanExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+
+    async def execute_plan_step(self, **kwargs) -> MediaArtifactVersion:
+        if not self.calls:
+            self.entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+        return await super().execute_plan_step(**kwargs)
+
 class ConcurrencyProbeExecutor(FakePlanExecutor):
     def __init__(self) -> None:
         super().__init__()
@@ -259,6 +273,96 @@ class FakeRebuildExecutor:
 
 
 class InitialBuildTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_initial_build_stops_after_active_step_and_can_resume(self):
+        runtime = await video_runtime()
+        project, version = await runtime.create_project(
+            user_id="user", title="Stopped initial build",
+        )
+        plan = await runtime.plan_project(
+            project_id=project.id,
+            base_project_version_id=version.id,
+            video_spec=video_spec(),
+            idempotency_key="stopped-initial-plan",
+        )
+        build = await runtime.start_build(
+            project_id=project.id,
+            plan_id=plan.id,
+            base_project_version_id=version.id,
+            idempotency_key="stopped-initial-build",
+        )
+
+        async def validate(*, build_id, artifact):
+            return [ValidationResult(
+                project_id=project.id,
+                build_id=build_id,
+                artifact_version_id=artifact.id,
+                validator_id="test-continuity",
+                passed=True,
+            )]
+
+        runtime.validate_artifact = validate
+        executor = CancellationSwallowingPlanExecutor()
+        task = asyncio.create_task(runtime.execute_build(
+            project_id=project.id,
+            build_id=build.id,
+            executor=executor,
+        ))
+        runtime._build_tasks[build.id] = task
+        await executor.entered.wait()
+
+        stopped = await runtime.cancel_build(project_id=project.id, build_id=build.id)
+
+        self.assertEqual(stopped.status, "cancelled")
+        self.assertEqual((await runtime.repo.get_build(project.id, build.id)).status, "cancelled")
+        self.assertEqual(len(executor.calls), 1)
+        self.assertEqual(
+            (await runtime.repo.get_project(project.id)).current_version_id,
+            version.id,
+        )
+
+        await runtime.resume_cancelled_build(project_id=project.id, build_id=build.id)
+        resumed_executor = FakePlanExecutor()
+        completed, committed = await runtime.execute_build(
+            project_id=project.id,
+            build_id=build.id,
+            executor=resumed_executor,
+        )
+        self.assertEqual(completed.status, "completed")
+        self.assertIsNotNone(committed)
+        self.assertNotIn(executor.calls[0], resumed_executor.calls)
+
+    async def test_cancelled_initial_build_cannot_publish_project_version(self):
+        runtime = await video_runtime()
+        project, version = await runtime.create_project(
+            user_id="user", title="Cancelled initial build",
+        )
+        plan = await runtime.plan_project(
+            project_id=project.id,
+            base_project_version_id=version.id,
+            video_spec=video_spec(),
+            idempotency_key="cancelled-initial-plan",
+        )
+        build = await runtime.start_build(
+            project_id=project.id,
+            plan_id=plan.id,
+            base_project_version_id=version.id,
+            idempotency_key="cancelled-initial-build",
+        )
+        await runtime.repo.cancel_build(project.id, build.id)
+
+        with self.assertRaisesRegex(ValueError, "cannot commit cancelled build"):
+            await runtime.repo.commit_initial_build(
+                build_id=build.id,
+                artifacts=[],
+                dependencies=[],
+                validation_results=[],
+            )
+
+        self.assertEqual(
+            (await runtime.repo.get_project(project.id)).current_version_id,
+            version.id,
+        )
+
     def test_video_spec_requires_explicit_workflow_selection(self) -> None:
         raw = video_spec().model_dump(mode="json")
         raw.pop("workflow_id")

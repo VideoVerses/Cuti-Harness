@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 import sys
 from pathlib import Path
@@ -29,6 +30,31 @@ class DeterministicExecutor:
                 "upstream_replacements": sorted(completed_replacements),
             },
         )
+
+
+class RecordingExecutor(DeterministicExecutor):
+    def __init__(self):
+        self.calls = []
+
+    async def rebuild_artifact(self, **kwargs):
+        self.calls.append(kwargs["source"].id)
+        return await super().rebuild_artifact(**kwargs)
+
+
+class CancellationSwallowingExecutor(RecordingExecutor):
+    def __init__(self):
+        super().__init__()
+        self.entered = asyncio.Event()
+
+    async def rebuild_artifact(self, **kwargs):
+        self.calls.append(kwargs["source"].id)
+        if len(self.calls) == 1:
+            self.entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+        return await DeterministicExecutor.rebuild_artifact(self, **kwargs)
 
 
 async def _project_fixture():
@@ -90,6 +116,97 @@ async def _project_fixture():
 
 
 class IncrementalRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_build_stays_stopped_when_step_swallows_cancellation(self):
+        runtime, project_id, character, *_ = await _project_fixture()
+        project = await runtime.repo.get_project(project_id)
+        original_version_id = project.current_version_id
+        plan = await runtime.preview_change(
+            project_id=project_id,
+            description="Stop after the active rebuild step",
+            target_artifact_version_ids=[character.id],
+        )
+        build = await runtime.apply_rebuild(
+            project_id=project_id,
+            plan_id=plan.id,
+            base_project_version_id=original_version_id,
+            idempotency_key="cancel-swallowed-step",
+        )
+
+        async def validate(*, build_id, artifact):
+            return [ValidationResult(
+                project_id=project_id,
+                build_id=build_id,
+                artifact_version_id=artifact.id,
+                validator_id="test-continuity",
+                passed=True,
+            )]
+
+        runtime.validate_artifact = validate
+        executor = CancellationSwallowingExecutor()
+        task = asyncio.create_task(runtime.execute_build(
+            project_id=project_id,
+            build_id=build.id,
+            executor=executor,
+        ))
+        runtime._build_tasks[build.id] = task
+        await executor.entered.wait()
+        stopped = await runtime.cancel_build(project_id=project_id, build_id=build.id)
+
+        self.assertEqual(stopped.status, "cancelled")
+        self.assertEqual((await runtime.repo.get_build(project_id, build.id)).status, "cancelled")
+        self.assertEqual(len(executor.calls), 1)
+        self.assertEqual(
+            (await runtime.repo.get_project(project_id)).current_version_id,
+            original_version_id,
+        )
+
+        await runtime.resume_cancelled_build(project_id=project_id, build_id=build.id)
+        resumed_executor = RecordingExecutor()
+        completed, version = await runtime.execute_build(
+            project_id=project_id,
+            build_id=build.id,
+            executor=resumed_executor,
+        )
+        self.assertEqual(completed.status, "completed")
+        self.assertNotEqual(version.id, original_version_id)
+        self.assertEqual(len(resumed_executor.calls), 2)
+
+    async def test_stale_update_cannot_overwrite_terminal_build(self):
+        runtime, project_id, character, *_ = await _project_fixture()
+        project = await runtime.repo.get_project(project_id)
+        plan = await runtime.preview_change(
+            project_id=project_id,
+            description="Cancel stale update test",
+            target_artifact_version_ids=[character.id],
+        )
+        build = await runtime.apply_rebuild(
+            project_id=project_id,
+            plan_id=plan.id,
+            base_project_version_id=project.current_version_id,
+            idempotency_key="cancel-stale-update",
+        )
+        step = (await runtime.repo.list_build_steps(project_id, build.id))[0]
+        stale_step = step.model_copy(update={"status": "running"})
+        step.status = "completed"
+        await runtime.repo.update_build_step(step)
+        stale_step.status = "failed"
+        stale_step.error = "late worker failure"
+
+        step_result = await runtime.repo.update_build_step(stale_step)
+
+        self.assertEqual(step_result.status, "completed")
+        self.assertEqual(
+            (await runtime.repo.list_build_steps(project_id, build.id))[0].status,
+            "completed",
+        )
+        stale = build.model_copy(update={"status": "running"})
+        await runtime.repo.cancel_build(project_id, build.id)
+
+        result = await runtime.repo.update_build(stale)
+
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual((await runtime.repo.get_build(project_id, build.id)).status, "cancelled")
+
     async def test_execute_build_runs_in_dependency_order_and_commits_once(self):
         runtime, project_id, character, shot1, shot2, keyframe3, clip3, timeline = await _project_fixture()
         project = await runtime.repo.get_project(project_id)

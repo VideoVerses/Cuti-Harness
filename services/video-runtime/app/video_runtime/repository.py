@@ -845,8 +845,14 @@ class InMemoryVideoProjectRepository:
             build = self.builds.get(step.build_id)
             if build is None or build.project_id != step.project_id:
                 raise LookupError("build not found")
-            if step.plan_step_id not in self.build_steps[step.build_id]:
+            current = self.build_steps[step.build_id].get(step.plan_step_id)
+            if current is None:
                 raise LookupError("build step not found")
+            if (
+                current.status in {"failed", "cancelled", "completed"}
+                and current.status != step.status
+            ):
+                return deepcopy(current)
             step.updated_at = now()
             self.build_steps[step.build_id][step.plan_step_id] = deepcopy(step)
             self._append_event(step.project_id, "build.step_status", {
@@ -911,6 +917,8 @@ class InMemoryVideoProjectRepository:
                 raise LookupError("build not found")
             if build.status == "completed" and build.project_version_id:
                 return deepcopy(build), deepcopy(self.versions[build.project_version_id])
+            if build.status in {"failed", "cancelled"}:
+                raise ValueError(f"cannot commit {build.status} build")
             project = self._project(build.project_id)
             self._assert_version(project, build.base_project_version_id)
             if any(not item.passed for item in validation_results):
@@ -963,6 +971,8 @@ class InMemoryVideoProjectRepository:
             current = self.builds.get(build.id)
             if current is None or current.project_id != build.project_id:
                 raise LookupError("build not found")
+            if current.status in {"failed", "cancelled", "completed"}:
+                return deepcopy(current)
             build.updated_at = now()
             self.builds[build.id] = deepcopy(build)
             self._append_event(build.project_id, "build.status", {

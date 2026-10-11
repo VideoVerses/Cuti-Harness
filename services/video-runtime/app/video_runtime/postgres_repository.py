@@ -691,24 +691,33 @@ class PostgresVideoProjectRepository:
     async def update_build_step(self, step: BuildStep) -> BuildStep:
         step.updated_at = now()
         async with self.pool.acquire() as connection, connection.transaction():
-            result = await connection.execute(
+            row = await connection.fetchrow(
                 f"""UPDATE {self.schema}.build_steps SET status=$4,attempt=$5,
                 remote_operation_id=$6,result_artifact_version_id=$7,error=$8,
                 started_at=$9,completed_at=$10,updated_at=$11,remote_provider=$12
-                WHERE id=$1 AND build_id=$2 AND project_id=$3""",
+                WHERE id=$1 AND build_id=$2 AND project_id=$3
+                  AND (status NOT IN ('failed','cancelled','completed') OR status=$4)
+                RETURNING *""",
                 step.id, step.build_id, step.project_id, step.status, step.attempt,
                 step.remote_operation_id, step.result_artifact_version_id, step.error,
                 step.started_at, step.completed_at, step.updated_at,
                 step.remote_provider,
             )
-            if result == "UPDATE 0":
-                raise LookupError("build step not found")
+            if row is None:
+                row = await connection.fetchrow(
+                    f"""SELECT * FROM {self.schema}.build_steps
+                    WHERE id=$1 AND build_id=$2 AND project_id=$3""",
+                    step.id, step.build_id, step.project_id,
+                )
+                if row is None:
+                    raise LookupError("build step not found")
+                return self._step(row)
             await self._append_event(connection, step.project_id, "build.step_status", {
                 "build_id": step.build_id, "step_id": step.plan_step_id,
                 "status": step.status, "attempt": step.attempt,
                 "artifact_version_id": step.result_artifact_version_id,
             })
-        return step
+        return self._step(row)
 
     async def update_build_progress(
         self, project_id: str, build_id: str, progress: float, actual_cost: float,
@@ -763,6 +772,8 @@ class PostgresVideoProjectRepository:
             build = self._build(row)
             if build.status == "completed" and build.project_version_id:
                 return build, await self._get_version(connection, build.project_version_id)
+            if build.status in {"failed", "cancelled"}:
+                raise ValueError(f"cannot commit {build.status} build")
             project = await self._locked_project(connection, build.project_id)
             self._assert_version(project, build.base_project_version_id)
             if any(not item.passed for item in validation_results):
@@ -1304,20 +1315,28 @@ class PostgresVideoProjectRepository:
     async def update_build(self, build: Build) -> Build:
         build.updated_at = now()
         async with self.pool.acquire() as connection, connection.transaction():
-            result = await connection.execute(
+            row = await connection.fetchrow(
                 f"""UPDATE {self.schema}.builds SET status=$3,progress=$4,message=$5,
                 project_version_id=$6,error=$7,updated_at=$8,actual_cost=$9
-                WHERE id=$1 AND project_id=$2""",
+                WHERE id=$1 AND project_id=$2
+                  AND status NOT IN ('failed','cancelled','completed')
+                RETURNING *""",
                 build.id, build.project_id, build.status, build.progress, build.message,
                 build.project_version_id, build.error, build.updated_at, build.actual_cost,
             )
-            if result == "UPDATE 0":
-                raise LookupError("build not found")
+            if row is None:
+                row = await connection.fetchrow(
+                    f"SELECT * FROM {self.schema}.builds WHERE id=$1 AND project_id=$2",
+                    build.id, build.project_id,
+                )
+                if row is None:
+                    raise LookupError("build not found")
+                return self._build(row)
             await self._append_event(connection, build.project_id, "build.status", {
                 "build_id": build.id, "status": build.status,
                 "progress": build.progress, "message": build.message,
             })
-        return build
+        return self._build(row)
 
     async def requeue_failed_build(self, project_id: str, build_id: str) -> Build:
         """Retry failed steps without discarding successful, already-paid outputs."""
